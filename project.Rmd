@@ -1,0 +1,117 @@
+---
+output: html_document
+---
+## Predicting Weight Lifting Exercise Manner Based On Wearable Tracking System Measurements
+
+### Synopsis
+
+In this report we aim to predict the manner in which a group of subjects performed a certain physical exercise based on various accelerometer measurements. 
+
+Six male participants aged between 20-28 years performed one set of 10 repetitions of the Unilateral Dumbbell Curve in five different ways: one exactly according to the specifications, and the other four corresponing to common mistakes. Four sensors were mounted in the users' glove, armband, lumbar belt and dumbbell for data recording. More information about this study can be found [here](http://groupware.les.inf.puc-rio.br/har).
+
+In our report we first load, clean and process the training data. We then build a prediction model using this data. We finally use this model to predict 20 different test cases.
+
+### Data Processing
+
+For this report we are going to use the Weight Lifting Exercise Dataset. The training data can be downloaded from the following [webpage](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).
+We first download the file into the current directory and then use the **read.csv()** function to load the first 50 rows. 
+ 
+```{r chunk 01, cache = TRUE}
+myurl1 <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url = myurl1, destfile = "pml-training.csv", method = "curl")
+data_head <- read.csv("pml-training.csv", nrow = 50)
+```
+
+We then look at the number of variables of the dataset and also at the type of the first 15 variables. 
+
+```{r chunk 02}
+ncol(data_head)
+str(data_head[, 1:15])
+```
+
+We notice that the first seven variables (which are related to data acquisition) are not relevant for our prediction, and that the missing values are coded as "NA", "" or "#DIV/0!". We now read the whole dataset, but this time we use the *colClasses* parameter to skip the first seven columns, and we also specify the possible missing values using the *na.strings* parameter. The omitted columns are indicated by "NULL". We store this dataset in a new variable called *data*.
+
+```{r chunk 03, cache = TRUE}
+data <- read.csv("pml-training.csv", colClasses = c(rep("NULL", 7), rep(NA, 153)), na.strings = c("NA", "", "#DIV/0!"))
+```
+
+We further subset the dataset by only retaining the variables that have no missing values. 
+
+```{r chunk 04}
+data <- data[, colSums(is.na(data)) == 0]
+```
+
+This new clean data frame has `r nrow(data)` rows and `r ncol(data)` columns, so it is approximatively three times smaller than the original dataset. 
+
+We will now determine the correlation between all the predictor variables. We create a matrix *M* of the absolute values of the correlation of all columns except the last one (which is the outcome). Since every variable has a correlation of 1 with itself, we set the diagonal of the matrix *M* to be 0. We then print the variables that have high correlation (at least 0.8) with other variables. 
+
+```{r chunk 05}
+M <- abs(cor(data[, -53]))
+diag(M) <- 0
+which(M > 0.8, arr.ind = TRUE)
+```
+
+In order to reduce the noise of the train model, we will preprocess the data by doing principal component analysis (PCA). We will do this preprocessing later on as part of the training process.
+
+### Building The Model
+
+We first have to load the *caret* R package. 
+
+```{r chunk 06, message = FALSE, warning = FALSE}
+library(caret)
+```
+
+Since the training process is time-consuming, we will use the parallel processing method. We first load the *doMC* package and then register 3 cores. 
+
+```{r chunk 07, message = FALSE, warning = FALSE}
+library(doMC)
+registerDoMC(cores = 3)
+```
+
+In order to allow reproducibility we have to set the seed.
+
+```{r chunk 08, message = FALSE, warning = FALSE}
+set.seed(1115)
+```
+
+Since we want to be more precise about the way that we train our model, we will use the **trainControl()** function to set the preprocessing threshold to 0.99.
+For resampling the data we use a 10-fold cross-validation.
+
+We use the random forest method to train our model on the **data** dataset. The advantage of this method is that the expected out of sample error is small. 
+
+```{r chunk 09, message = FALSE, warning = FALSE, cache = TRUE}
+ctrl <- trainControl(method = "cv", number = 10, preProcOptions = list(thresh = 0.99), allowParallel = TRUE)
+modFit <- train(classe ~ ., data = data, method = "rf", trControl = ctrl, preProcess = "pca", prox = FALSE)
+modFit
+```
+
+The expected out-of-sample error obtained via the 10-fold cross-validation is 1.3% (hence the accuracy is 98.7%). We also print the final model. 
+
+```{r chunk 10, message = FALSE, warning = FALSE, cache = TRUE}
+modFit$finalModel
+```
+
+### Predicting New Values
+
+In order to predict the test cases we first have to download and read the testing dataset, which is available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). 
+
+```{r chunk 11, cache = TRUE}
+myurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url = myurl2, destfile = "pml-testing.csv", method = "curl")
+test <- read.csv("pml-testing.csv")
+```
+
+Since the **test** dataset has only 20 observations and our estimated accuracy is 98.7%, we expect that at most one of the test cases might be missclassified. We use the **predict()** function to get our predictions. We then write the prediction for each test case in a separate file that will be submitted for the other part of the project.
+
+```{r chunk 12, message = FALSE, warning = FALSE,}
+predTest <- predict(modFit, test)
+predTest
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file = filename, quote=FALSE, row.names = FALSE, col.names = FALSE)
+  }
+}
+pml_write_files(predTest)
+```
